@@ -18,7 +18,7 @@ TIMEOUT = 1.0
 MAX_RETRIES = 5
 INFLIGHT_COUNT = 10
 
-LOSS_RATE = 0.0
+LOSS_RATE = 0.05
 CORRUPTION_RATE = 0.0
 
 SYN = 0x1
@@ -136,9 +136,15 @@ class Connection:
             log(f"Received out-of-order packet: SEQ={seq_num}, expected {self.ack_num}")
             return
 
-        self.retries = 0
+        # reset retries if ack_num is correct
+        if ack_num == self.seq_num + 1:
+            self.retries = 0
 
         match self.state():
+            case ConState.CLOSED:
+                log(f"Received packet in CLOSED state. Ignoring.")
+                return
+
             case ConState.SYN_SENT if syn and ack:
                 self.ack_num = seq_num + 1
                 self.seq_num += 1
@@ -436,7 +442,13 @@ class RudpSocket:
     async def _listen_helper(self):
         while True:
             try:
-                packet, addr = await self.loop.sock_recvfrom(self.udp_socket, BUFFER_SIZE)
+                # If connection is closed, remove it
+                for addr, conn in list(self.connections.items()):
+                    if conn.state() == ConState.CLOSED:
+                        log(f"Connection closed: {addr}")
+                        del self.connections[addr]
+
+                packet, addr = await asyncio.wait_for(self.loop.sock_recvfrom(self.udp_socket, BUFFER_SIZE), 0.01)
                 if not packet:
                     continue
 
@@ -447,10 +459,6 @@ class RudpSocket:
                 if conn.state() == ConState.CLOSE_WAIT:
                     conn.close()
 
-                # If connection is closed, remove it
-                if conn.state() == ConState.CLOSED and not conn.data_available():
-                    del self.connections[addr]
-
                 # recv buffers
                 if conn.data_available():
                     await self.recv_queue.put((addr, conn.recv()))
@@ -460,6 +468,8 @@ class RudpSocket:
 
             except BlockingIOError:
                 await asyncio.sleep(0.01)
+            except asyncio.TimeoutError:
+                continue
             except Exception as e:
                 print(f"Global listener error: {e}")
                 break
