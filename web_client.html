@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RUDP HTTP Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        button {
+            padding: 10px 15px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        .response {
+            margin-top: 20px;
+            background: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            overflow-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <h1>RUDP HTTP Client</h1>
+
+    <div id="get-section">
+        <h2>GET Request</h2>
+        <div class="form-group">
+            <label for="get-path">Path:</label>
+            <input type="text" id="get-path" value="/index.html">
+        </div>
+        <button onclick="sendGetRequest()">Send GET Request</button>
+        <div id="get-response" class="response" style="display: none;"></div>
+    </div>
+
+    <div id="post-section" style="margin-top: 40px;">
+        <h2>POST Request</h2>
+        <div class="form-group">
+            <label for="post-path">Path:</label>
+            <input type="text" id="post-path" value="/submit">
+        </div>
+        <div class="form-group">
+            <label for="post-data">Data:</label>
+            <textarea id="post-data" rows="5">name=John&age=30</textarea>
+        </div>
+        <button onclick="sendPostRequest()">Send POST Request</button>
+        <div id="post-response" class="response" style="display: none;"></div>
+    </div>
+
+    <script>
+        async function sendGetRequest() {
+            const path = document.getElementById('get-path').value;
+            const responseElement = document.getElementById('get-response');
+            responseElement.textContent = "Loading...";
+            responseElement.style.display = 'block';
+
+            try {
+                const response = await fetch(`/proxy?method=GET&path=${encodeURIComponent(path)}`);
+                const responseText = await response.text();
+                responseElement.textContent = responseText;
+            } catch (error) {
+                responseElement.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function sendPostRequest() {
+            const path = document.getElementById('post-path').value;
+            const data = document.getElementById('post-data').value;
+            const responseElement = document.getElementById('post-response');
+            responseElement.textContent = "Loading...";
+            responseElement.style.display = 'block';
+
+            try {
+                const response = await fetch(`/proxy?method=POST&path=${encodeURIComponent(path)}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: data
+                });
+                const responseText = await response.text();
+                responseElement.textContent = responseText;
+            } catch (error) {
+                responseElement.textContent = `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>

@@ -429,13 +429,15 @@ class RudpSocket:
             if random.random() < LOSS_RATE:
                 log(f"Simulated packet loss")
                 return
-
+            packet_bytes = packet
             if random.random() < CORRUPTION_RATE:
-                idx = random.randint(0, len(packet) - 1)
-                packet[idx] = random.randint(0, 255)
+                packet_list= bytearray(packet_bytes)
+                idx = random.randint(0, len(packet_list) - 1)
+                packet_list[idx] = packet_list[idx]^0xFF
+                packet_bytes= bytes(packet_list)
                 log(f"Simulated corrupted byte")
 
-            await self.loop.sock_sendto(self.udp_socket, packet, address)
+            await self.loop.sock_sendto(self.udp_socket, packet_bytes, address)
 
         self.loop.create_task(test())
 
