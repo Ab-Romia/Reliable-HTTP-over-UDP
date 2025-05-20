@@ -46,22 +46,6 @@ def log(message):
     print(colored_message)
 
 
-def simulate_packet_corruption(packet, error_rate):
-    if random.random() < error_rate:
-        pos = random.randint(0, len(packet) - 1)
-        corrupted_byte = (packet[pos] + random.randint(1, 255)) % 256
-        return packet[:pos] + bytes([corrupted_byte]) + packet[pos + 1:]
-    return packet
-
-
-def simulate_out_of_order(seq_num, out_of_order_rate):
-    pass
-
-
-def simulate_packet_loss(loss_rate):
-    return random.random() < loss_rate
-
-
 def calculate_checksum(seq_num, ack_num, flags, length, payload_data=b''):
     header = struct.pack('!IIBH', seq_num, ack_num, flags, length)
     data = header + payload_data

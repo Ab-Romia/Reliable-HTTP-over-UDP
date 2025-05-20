@@ -3,7 +3,6 @@ import heapq
 import random
 import socket as skt
 import struct
-import threading
 from enum import Enum
 from typing import Callable
 
@@ -119,22 +118,10 @@ class Connection:
         log(f"Received packet: SEQ={seq_num}, ACK={ack_num}, [Flags={flags2str(flags)}]"
             f", Data={len(data)} bytes")
 
-        if flags & RST:
-            self._stop_timer()
-            self.state(ConState.LISTEN)
-
         syn = flags & SYN
         ack = flags & ACK
         fin = flags & FIN
         rst = flags & RST
-
-        if ack and ack_num > self.seq_num + 1 and self.state() != ConState.ESTABLISHED:
-            log(f"Received ACK for {ack_num} but expected {self.seq_num + 1}.")
-            return
-
-        if seq_num < self.ack_num:
-            log(f"Received out-of-order packet: SEQ={seq_num}, expected {self.ack_num}")
-            return
 
         # reset retries if ack_num is correct
         if ack_num == self.seq_num + 1:
@@ -143,7 +130,20 @@ class Connection:
         match self.state():
             case ConState.CLOSED:
                 log(f"Received packet in CLOSED state. Ignoring.")
-                return
+
+            case ConState.SYN_RECEIVED if rst:
+                log(f"Received RST in SYN_RECEIVED state. Closing connection.")
+                self.state(ConState.LISTEN)
+
+            case _ if rst:
+                log(f"Received RST in SYN_RECEIVED state. Closing connection.")
+                self.state(ConState.CLOSED)
+
+            case x if x != ConState.ESTABLISHED and ack and ack_num > self.seq_num + 1:
+                log(f"Received ACK for {ack_num} but expected {self.seq_num + 1}.")
+
+            case _ if seq_num < self.ack_num:
+                log(f"Received out-of-order packet: SEQ={seq_num}, expected {self.ack_num}")
 
             case ConState.SYN_SENT if syn and ack:
                 self.ack_num = seq_num + 1
@@ -336,7 +336,7 @@ class Connection:
                     self._send_packet(ACK)
 
         self._start_timer()
-        return True
+        return
 
     def _stop_timer(self):
         if self.timer:
@@ -346,9 +346,8 @@ class Connection:
     def _start_timer(self, timeout=TIMEOUT):
         if self.timer:
             self.timer.cancel()
-        self.timer = threading.Timer(timeout * 1 + random.random(), self._handle_timeout)
-        self.timer.daemon = True
-        self.timer.start()
+        loop = asyncio.get_event_loop()
+        self.timer = loop.call_later(timeout * (1 + self.retries), self._handle_timeout)
 
 
 class RudpSocket:
@@ -421,9 +420,6 @@ class RudpSocket:
 
         self.closing = True
 
-        await asyncio.wait_for(self._global_listener, timeout=None)
-        self.udp_socket.close()
-
     def _send_raw_packet(self, packet, address):
         async def test():
             if random.random() < LOSS_RATE:
@@ -431,10 +427,10 @@ class RudpSocket:
                 return
             packet_bytes = packet
             if random.random() < CORRUPTION_RATE:
-                packet_list= bytearray(packet_bytes)
+                packet_list = bytearray(packet_bytes)
                 idx = random.randint(0, len(packet_list) - 1)
-                packet_list[idx] = packet_list[idx]^0xFF
-                packet_bytes= bytes(packet_list)
+                packet_list[idx] = packet_list[idx] ^ 0xFF
+                packet_bytes = bytes(packet_list)
                 log(f"Simulated corrupted byte")
 
             await self.loop.sock_sendto(self.udp_socket, packet_bytes, address)
@@ -442,20 +438,17 @@ class RudpSocket:
         self.loop.create_task(test())
 
     async def _listen_helper(self):
-        while True:
-            try:
-                # If connection is closed, remove it
-                for addr, conn in list(self.connections.items()):
-                    if conn.state() == ConState.CLOSED:
-                        log(f"Connection closed: {addr}")
-                        del self.connections[addr]
+        # If connection is closed, remove it
+        for addr, conn in list(self.connections.items()):
+            if conn.state() == ConState.CLOSED:
+                log(f"Connection closed: {addr}")
+                del self.connections[addr]
 
-                packet, addr = await asyncio.wait_for(self.loop.sock_recvfrom(self.udp_socket, BUFFER_SIZE), 0.01)
-                if not packet:
-                    continue
+        try:
+            packet, addr = await self.loop.sock_recvfrom(self.udp_socket, BUFFER_SIZE)
 
+            if packet:
                 conn = self.create_or_get_connection(addr)
-
                 conn.handle_packet(packet, addr)
 
                 if conn.state() == ConState.CLOSE_WAIT:
@@ -464,14 +457,13 @@ class RudpSocket:
                 # recv buffers
                 if conn.data_available():
                     await self.recv_queue.put((addr, conn.recv()))
+        except BlockingIOError:
+            pass
+        except Exception as e:
+            print(f"Global listener error: {e}")
+            return
 
-                if not self.connections and self.closing:
-                    break
-
-            except BlockingIOError:
-                await asyncio.sleep(0.01)
-            except asyncio.TimeoutError:
-                continue
-            except Exception as e:
-                print(f"Global listener error: {e}")
-                break
+        if self.connections or not self.closing:
+            self._global_listener = self.loop.create_task(self._listen_helper())
+        else:
+            self.udp_socket.close()
